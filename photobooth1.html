@@ -1,0 +1,270 @@
+<!doctype html>
+
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Photobooth</title>
+  <style>
+    :root{--bg:#0f1724;--card:#0b1220;--accent:#ef4444}
+    *{box-sizing:border-box;font-family:Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial}
+    body{margin:0;min-height:100vh;background:linear-gradient(180deg,#071025 0%, #071827 100%);color:#e6eef8;display:flex;align-items:center;justify-content:center;padding:24px}
+    .wrap{width:100%;max-width:980px}
+    header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+    h1{font-size:20px;margin:0}
+    .card{background:rgba(255,255,255,0.03);border-radius:12px;padding:12px;box-shadow:0 6px 18px rgba(2,6,23,0.6)}
+    .stage{display:grid;grid-template-columns:1fr 320px;gap:12px}
+    .video-area{position:relative;border-radius:10px;overflow:hidden;background:#000}
+    video, canvas{width:100%;height:100%;display:block}
+    .controls{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+    button, select, input[type='range']{background:transparent;border:1px solid rgba(255,255,255,0.08);padding:8px 10px;border-radius:8px;color:inherit;cursor:pointer}
+    .toolbar{display:flex;align-items:center;gap:8px}
+    .gallery{max-height:520px;overflow:auto;padding:8px;display:flex;flex-direction:column;gap:8px}
+    .thumb{display:flex;gap:8px;align-items:center}
+    .thumb img{width:84px;height:64px;object-fit:cover;border-radius:6px}
+    .info{flex:1}
+    .countdown{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:92px;font-weight:700;color:white;pointer-events:none;mix-blend-mode:overlay}
+    .filter-label{font-size:12px;opacity:.9}
+    .overlay-select{display:flex;flex-wrap:wrap;gap:6px}
+    .overlay-select button{padding:6px 8px;font-size:13px}
+    .flash{position:absolute;inset:0;background:white;opacity:0;pointer-events:none}
+    @media (max-width:900px){.stage{grid-template-columns:1fr;}.gallery{max-height:220px;flex-direction:row;overflow:auto}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>Photobooth — Tạo ảnh bằng camera</h1>
+      <div style="font-size:13px;opacity:.9">Bản demo đơn giản • Chạm vào <strong>Start</strong> để bật camera</div>
+    </header><div class="card">
+  <div class="stage">
+    <div>
+      <div class="video-area" id="videoArea">
+        <video id="video" autoplay playsinline></video>
+        <canvas id="captureCanvas" style="display:none"></canvas>
+        <div id="countdown" class="countdown" aria-hidden="true"></div>
+        <div id="flash" class="flash"></div>
+      </div>
+
+      <div class="controls">
+        <div class="toolbar">
+          <button id="startBtn">Start</button>
+          <button id="captureBtn" disabled>Capture</button>
+          <button id="countdownBtn" disabled>3s Countdown</button>
+          <button id="mirrorBtn" disabled>Mirror</button>
+          <button id="clearGallery">Clear Gallery</button>
+        </div>
+
+        <div style="margin-left:8px;display:flex;gap:8px;align-items:center">
+          <label class="filter-label">Filter</label>
+          <select id="filterSelect">
+            <option value="none">None</option>
+            <option value="grayscale(1)">Grayscale</option>
+            <option value="sepia(1)">Sepia</option>
+            <option value="invert(1)">Invert</option>
+            <option value="contrast(1.4)">High Contrast</option>
+            <option value="blur(2px)">Blur</option>
+          </select>
+        </div>
+
+        <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+          <label class="filter-label">Overlay</label>
+          <div class="overlay-select">
+            <button data-overlay="none" class="overlayBtn">None</button>
+            <button data-overlay="frame1" class="overlayBtn">Frame 1</button>
+            <button data-overlay="frame2" class="overlayBtn">Frame 2</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <aside>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <strong>Gallery</strong>
+        <small style="opacity:.8">Click image để tải xuống</small>
+      </div>
+
+      <div class="gallery" id="gallery"></div>
+    </aside>
+  </div>
+</div>
+
+<footer style="margin-top:10px;font-size:13px;opacity:.8">Hỗ trợ: tải ảnh, áp filter, đếm ngược, mirror, overlay đơn giản.</footer>
+
+  </div><script>
+  const startBtn = document.getElementById('startBtn');
+  const captureBtn = document.getElementById('captureBtn');
+  const countdownBtn = document.getElementById('countdownBtn');
+  const mirrorBtn = document.getElementById('mirrorBtn');
+  const video = document.getElementById('video');
+  const canvas = document.getElementById('captureCanvas');
+  const gallery = document.getElementById('gallery');
+  const countdownEl = document.getElementById('countdown');
+  const flash = document.getElementById('flash');
+  const filterSelect = document.getElementById('filterSelect');
+  const overlayBtns = document.querySelectorAll('.overlayBtn');
+  let stream = null;
+  let mirrored = false;
+  let currentOverlay = 'none';
+
+  async function startCamera(){
+    try{
+      stream = await navigator.mediaDevices.getUserMedia({video:{width:1280,height:720}, audio:false});
+      video.srcObject = stream;
+      captureBtn.disabled = false;
+      countdownBtn.disabled = false;
+      mirrorBtn.disabled = false;
+      startBtn.textContent = 'Stop';
+    }catch(err){
+      alert('Không truy cập được camera: ' + err.message);
+    }
+  }
+
+  function stopCamera(){
+    if(stream){
+      stream.getTracks().forEach(t=>t.stop());
+      stream = null;
+    }
+    video.srcObject = null;
+    captureBtn.disabled = true;
+    countdownBtn.disabled = true;
+    mirrorBtn.disabled = true;
+    startBtn.textContent = 'Start';
+  }
+
+  startBtn.addEventListener('click', ()=>{
+    if(stream) stopCamera(); else startCamera();
+  });
+
+  mirrorBtn.addEventListener('click', ()=>{
+    mirrored = !mirrored;
+    video.style.transform = mirrored ? 'scaleX(-1)' : 'none';
+    mirrorBtn.textContent = mirrored ? 'Unmirror' : 'Mirror';
+  });
+
+  captureBtn.addEventListener('click', captureImage);
+  countdownBtn.addEventListener('click', ()=>startCountdown(3));
+
+  function startCountdown(seconds=3){
+    countdownEl.style.display = 'flex';
+    countdownEl.textContent = seconds;
+    let s = seconds;
+    const id = setInterval(()=>{
+      s--;
+      if(s<=0){
+        clearInterval(id);
+        countdownEl.style.display = 'none';
+        captureImage(true);
+      } else {
+        countdownEl.textContent = s;
+      }
+    },1000);
+  }
+
+  function flashEffect(){
+    flash.style.transition = 'none';
+    flash.style.opacity = '0.95';
+    requestAnimationFrame(()=>{
+      flash.style.transition = 'opacity 400ms ease-out';
+      flash.style.opacity = '0';
+    });
+  }
+
+  function applyOverlayToCtx(ctx, w, h){
+    if(currentOverlay === 'frame1'){
+    
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+      ctx.lineWidth = Math.max(8, Math.min(w,h)*0.02);
+      ctx.strokeRect(6,6,w-12,h-12);
+    } else if(currentOverlay === 'frame2'){
+      ctx.fillStyle = 'rgba(0,0,0,0.18)';
+      ctx.fillRect(0,h-80,w,80);
+      ctx.font = '20px sans-serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.95)';
+      ctx.fillText(new Date().toLocaleString(), 12, h-40);
+    }
+  }
+
+  function captureImage(fromCountdown=false){
+    if(!stream) return;
+    const videoTrack = stream.getVideoTracks()[0];
+    const settings = videoTrack.getSettings ? videoTrack.getSettings() : {width:video.videoWidth, height:video.videoHeight};
+
+    const w = video.videoWidth || settings.width || 640;
+    const h = video.videoHeight || settings.height || 480;
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+
+    
+    if(mirrored){
+      ctx.translate(w,0); ctx.scale(-1,1);
+    }
+
+    ctx.filter = filterSelect.value || 'none';
+    ctx.drawImage(video, 0, 0, w, h);
+
+    if(mirrored){ ctx.setTransform(1,0,0,1,0,0); }
+
+    applyOverlayToCtx(ctx, w, h);
+
+    flashEffect();
+
+    canvas.toBlob(async (blob)=>{
+      const url = URL.createObjectURL(blob);
+      addToGallery(url, blob);
+    }, 'image/jpeg', 0.92);
+  }
+
+  function addToGallery(url, blob){
+    const item = document.createElement('div');
+    item.className = 'thumb card';
+    item.style.display = 'flex';
+    const img = document.createElement('img');
+    img.src = url;
+    img.alt = 'photo';
+
+    const info = document.createElement('div');
+    info.className = 'info';
+    const btnRow = document.createElement('div');
+    btnRow.style.display='flex'; btnRow.style.gap='8px';
+
+    const dlBtn = document.createElement('button');
+    dlBtn.textContent = 'Tải xuống';
+    dlBtn.addEventListener('click', ()=>downloadBlob(blob, 'selfie.jpg'));
+
+    const delBtn = document.createElement('button');
+    delBtn.textContent = 'Xóa';
+    delBtn.addEventListener('click', ()=>{ item.remove(); URL.revokeObjectURL(url); });
+
+    btnRow.appendChild(dlBtn); btnRow.appendChild(delBtn);
+    info.appendChild(btnRow);
+
+    item.appendChild(img); item.appendChild(info);
+    gallery.prepend(item);
+  }
+
+  function downloadBlob(blob, filename){
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
+  document.getElementById('clearGallery').addEventListener('click', ()=>{ gallery.innerHTML=''; });
+
+  filterSelect.addEventListener('change', ()=>{
+    video.style.filter = filterSelect.value;
+  });
+
+  overlayBtns.forEach(b=>b.addEventListener('click', ()=>{
+    overlayBtns.forEach(x=>x.classList.remove('active'));
+    b.classList.add('active');
+    currentOverlay = b.dataset.overlay || 'none';
+  }));
+
+  window.addEventListener('beforeunload', ()=>{ if(stream) stopCamera(); });
+</script></body>
+</html>
